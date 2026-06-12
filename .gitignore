@@ -25,4 +25,4 @@ temp/
 .pytest_cache/
 
 # Environment
-.env
+.envkubeconfig
