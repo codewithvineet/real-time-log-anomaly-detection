@@ -1,0 +1,124 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-service
+  namespace: log-monitoring
+  labels:
+    app: ml-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ml-service
+  template:
+    metadata:
+      labels:
+        app: ml-service
+    spec:
+      initContainers:
+        # Wait for both Kafka and Elasticsearch before starting
+        - name: wait-for-dependencies
+          image: busybox
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for Kafka..."
+              until nc -z kafka-service 29092; do sleep 3; done
+              echo "Kafka ready."
+
+              echo "Waiting for Elasticsearch..."
+              until nc -z elasticsearch-service 9200; do sleep 3; done
+              echo "Elasticsearch ready."
+
+      containers:
+        - name: ml-service
+          image: ml-service:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8000
+
+          env:
+            - name: KAFKA_BROKER
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: KAFKA_BROKER
+            - name: KAFKA_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: KAFKA_TOPIC
+            - name: KAFKA_GROUP_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: KAFKA_GROUP_ID
+            - name: ES_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: ES_HOST
+            - name: ES_INDEX
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: ES_INDEX
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 40
+            periodSeconds: 20
+
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "200m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ml-service
+  namespace: log-monitoring
+spec:
+  selector:
+    app: ml-service
+  ports:
+    - port: 8000
+      targetPort: 8000
+      nodePort: 30800
+  type: NodePort
+---
+# HorizontalPodAutoscaler — scales ml-service replicas 1→3
+# when CPU usage crosses 70%. Requires metrics-server in minikube.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ml-service-hpa
+  namespace: log-monitoring
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ml-service
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

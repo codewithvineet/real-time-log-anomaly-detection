@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: log-producer
+  namespace: log-monitoring
+  labels:
+    app: log-producer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: log-producer
+  template:
+    metadata:
+      labels:
+        app: log-producer
+    spec:
+      # Wait for Kafka to be reachable before starting the producer
+      initContainers:
+        - name: wait-for-kafka
+          image: busybox
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for Kafka..."
+              until nc -z kafka-service 29092; do
+                echo "Kafka not ready, retrying in 5s..."
+                sleep 5
+              done
+              echo "Kafka is up!"
+
+      containers:
+        - name: log-producer
+          # imagePullPolicy: Never tells K8s to use the locally built image
+          # (the one you built with eval $(minikube docker-env))
+          image: log-producer:latest
+          imagePullPolicy: Never
+          env:
+            - name: KAFKA_BROKER
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: KAFKA_BROKER
+            - name: KAFKA_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: KAFKA_TOPIC
+
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+
+      # If it crashes, always restart (producer should run forever)
+      restartPolicy: Always

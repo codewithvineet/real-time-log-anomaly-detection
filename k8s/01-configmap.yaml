@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: log-monitoring
+data:
+  # Kafka
+  KAFKA_BROKER: "kafka-service:29092"
+  KAFKA_TOPIC: "app-logs"
+  KAFKA_GROUP_ID: "ml-anomaly-detector"
+
+  # Elasticsearch
+  ES_HOST: "http://elasticsearch-service:9200"
+  ES_INDEX: "log-anomalies"
+
+  # Grafana
+  GF_SECURITY_ADMIN_USER: "admin"
+  GF_SECURITY_ADMIN_PASSWORD: "admin"
+  GF_AUTH_ANONYMOUS_ENABLED: "true"
+
+  # Elasticsearch tuning
+  ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+  DISCOVERY_TYPE: "single-node"
