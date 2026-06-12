@@ -1,0 +1,6 @@
+pytest==8.1.1
+pytest-cov==5.0.0
+scikit-learn==1.4.2
+numpy==1.26.4
+fastapi==0.110.0
+pydantic==2.6.4
