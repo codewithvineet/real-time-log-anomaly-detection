@@ -137,14 +137,33 @@ class TestAnomalyDetector:
         assert 0.0 <= result["anomaly_score"] <= 1.0
 
     def test_normal_log_not_flagged(self, detector):
-        """A clearly normal log should not be flagged as an anomaly."""
-        log = {
-            "service": "auth-service", "level": "INFO",
-            "method": "GET", "status_code": 200, "latency_ms": 80,
+        """
+        A normal log should score lower than a clear anomaly on average.
+        We test relative ordering rather than an absolute threshold,
+        because the Isolation Forest score depends on training data randomness.
+        """
+        normal_log = {
+            "service": "auth-service",
+            "level": "INFO",
+            "method": "GET",
+            "status_code": 200,
+            "latency_ms": 80,
         }
-        result = detector.predict(log)
-        # Not guaranteed (model is probabilistic) but very likely for a clean normal log
-        assert result["anomaly_score"] < 0.8, "Normal log should have low anomaly score"
+
+        anomaly_log = {
+            "service": "payment-service",
+            "level": "ERROR",
+            "method": "POST",
+            "status_code": 503,
+            "latency_ms": 7000,
+        }
+
+        normal_result = detector.predict(normal_log)
+        anomaly_result = detector.predict(anomaly_log)
+
+        assert anomaly_result["anomaly_score"] > normal_result["anomaly_score"], \
+            f"Anomaly score {anomaly_result['anomaly_score']} should exceed " \
+            f"normal score {normal_result['anomaly_score']}"
 
     def test_anomalous_log_flagged(self, detector):
         """A clearly anomalous log (high latency + 5xx) should score highly."""

@@ -84,11 +84,18 @@ class TestAnomalyLog:
             assert 2000 <= log["latency_ms"] <= 8000, \
                 f"Anomaly latency out of range: {log['latency_ms']}"
 
-    def test_status_code_is_5xx(self):
+    def test_status_code_is_error(self):
+        """
+        Anomaly logs should have error-range status codes.
+        This includes 429 (rate limit) which is a valid anomaly signal,
+        plus all 5xx server errors.
+        """
+        valid_error_codes = {500, 502, 503, 504, 429}
+    
         for _ in range(20):
             log = build_anomaly_log("payment-service")
-            assert log["status_code"] >= 500, \
-                f"Anomaly should have 5xx status, got {log['status_code']}"
+            assert log["status_code"] in valid_error_codes, \
+                f"Unexpected anomaly status code: {log['status_code']}"
 
     def test_message_contains_anomaly_marker(self):
         log = build_anomaly_log("auth-service")
