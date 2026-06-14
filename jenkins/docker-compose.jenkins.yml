@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  jenkins:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jenkins
+    # Run as root — fixes Docker socket permission issues on Mac (Problem 4 & 5)
+    user: root
+    ports:
+      - "8080:8080"     # Jenkins web UI
+      - "50000:50000"   # Jenkins agent communication port
+    volumes:
+      # Persist Jenkins data (jobs, plugins, credentials) across restarts
+      - jenkins_home:/var/jenkins_home
+      # Mount the host Docker socket so Jenkins can build Docker images
+      # On Mac with Docker Desktop, the socket is at this path
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Mount your kubeconfig so kubectl works inside Jenkins
+      - ~/.kube:/root/.kube:ro
+    environment:
+      # Skip the initial setup wizard (useful for scripted setup)
+      - JAVA_OPTS=-Djenkins.install.runSetupWizard=false
+    restart: unless-stopped
+
+volumes:
+  jenkins_home:
