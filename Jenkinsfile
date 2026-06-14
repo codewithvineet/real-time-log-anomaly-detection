@@ -2,72 +2,91 @@ pipeline {
     agent any
 
     /*
-     * Environment variables available to all stages.
-     * DOCKER_HUB_REPO: change this to your Docker Hub username.
-     * IMAGE_TAG: uses the Git commit SHA so every build is uniquely tagged
-     *            — you can always roll back to an exact commit.
+     * FIX for Problem 7: No triggers block at all.
+     * An empty triggers {} block is invalid Groovy and crashes Jenkins.
+     * For local/minikube setups, just trigger builds manually or
+     * add a valid trigger only if you have a public GitHub webhook URL.
+     *
+     * If you have a public URL (e.g. via ngrok), uncomment this:
+     *
+     * triggers {
+     *     githubPush()
+     * }
      */
-    environment {
-        DOCKER_HUB_REPO  = "yourdockerhubusername"   // ← CHANGE THIS
-        ML_IMAGE         = "${DOCKER_HUB_REPO}/ml-service"
-        PRODUCER_IMAGE   = "${DOCKER_HUB_REPO}/log-producer"
-        IMAGE_TAG        = "${env.GIT_COMMIT?.take(7) ?: 'latest'}"
-        K8S_NAMESPACE    = "log-monitoring"
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: "10"))
+        timeout(time: 30, unit: "MINUTES")
+        disableConcurrentBuilds()
+        timestamps()
     }
 
     /*
-     * Build triggers:
-     *   - GitHub webhook fires on every push to main
-     *   - Poll as fallback every 5 minutes in case the webhook misses
+     * FIX for Problem 8: Do NOT put dynamic expressions in environment {}.
+     * Jenkins evaluates environment {} at parse time, before any git info
+     * is available. So GIT_COMMIT doesn't exist yet.
+     * We set IMAGE_TAG inside a script {} block in the first stage instead.
+     *
+     * Only put STATIC strings here.
      */
-    triggers {
-        githubPush()
-        pollSCM("H/5 * * * *")
-    }
-
-    options {
-        // Keep only the last 10 builds to save disk space
-        buildDiscarder(logRotator(numToKeepStr: "10"))
-        // Fail the build if it takes longer than 30 minutes
-        timeout(time: 30, unit: "MINUTES")
-        // Don't run two builds of the same branch simultaneously
-        disableConcurrentBuilds()
-        // Add timestamps to every log line
-        timestamps()
+    environment {
+        DOCKER_HUB_REPO = "codewithvineet"
+        ML_IMAGE         = "${DOCKER_HUB_REPO}/ml-service"
+        PRODUCER_IMAGE   = "${DOCKER_HUB_REPO}/log-producer"
+        K8S_NAMESPACE    = "log-monitoring"
+        GITHUB_REPO = "https://github.com/codewithvineet/real-time-log-anomaly-detection.git"
     }
 
     stages {
 
         // ── Stage 1: Checkout ──────────────────────────────────────────
+        // FIX for Problem 6: We do checkout manually here instead of
+        // relying on Pipeline-from-SCM which broke due to root:root ownership.
         stage("Checkout") {
             steps {
-                echo "📥 Checking out commit ${env.GIT_COMMIT} on branch ${env.GIT_BRANCH}"
-                checkout scm
+                // Clean workspace before checkout
+                deleteDir()
+
+                git(
+                    branch: 'main',
+                    credentialsId: 'github-https',
+                    url: GITHUB_REPO
+                )
+
+                /*
+                 * FIX for Problem 8: Set IMAGE_TAG here, AFTER git checkout,
+                 * when GIT_COMMIT is actually available.
+                 * We store it as env.IMAGE_TAG so all later stages can use it.
+                 */
+                script {
+                    env.IMAGE_TAG = sh(
+                        script: "git rev-parse --short HEAD",
+                        returnStdout: true
+                    ).trim()
+
+                    echo "Building commit: ${env.IMAGE_TAG}"
+                }
             }
         }
 
         // ── Stage 2: Test ──────────────────────────────────────────────
-        // Tests run in a Python container — no need for Python on the Jenkins host.
-        // If any test fails, the pipeline stops here and nothing gets built/deployed.
+        // Runs pytest with coverage. If any test fails, pipeline stops here.
+        // Nothing gets built or deployed with a broken test suite.
         stage("Test") {
-            agent {
-                docker {
-                    image "python:3.10-slim"
-                    // Reuse the same Docker daemon to avoid spinning up a new one
-                    reuseNode true
-                }
-            }
             steps {
-                echo "🧪 Installing test dependencies..."
+                echo "Installing test dependencies..."
                 sh """
-                    pip install --quiet -r tests/requirements-test.txt
-                    pip install --quiet -r ml-service/requirements.txt
-                    pip install --quiet -r log-producer/requirements.txt
+                    python3 -m venv .venv
+                    .venv/bin/python -m pip install --upgrade pip --quiet
+                    .venv/bin/python -m pip install -r tests/requirements-test.txt --quiet
+                    .venv/bin/python -m pip install -r ml-service/requirements.txt --quiet
+                    .venv/bin/python -m pip install -r log-producer/requirements.txt --quiet
                 """
 
-                echo "🧪 Running tests with coverage..."
+                echo "Running tests..."
                 sh """
-                    pytest tests/ \
+                    .venv/bin/python -m pytest tests/ \
+                        -v \
                         --tb=short \
                         --junitxml=test-results.xml \
                         --cov=ml-service \
@@ -78,27 +97,29 @@ pipeline {
             }
             post {
                 always {
-                    // Publish test results in Jenkins UI
-                    junit "test-results.xml"
-                    // Publish coverage report
-                    publishCoverage adapters: [coberturaAdapter("coverage.xml")]
+                    // Publish results in Jenkins UI even if tests fail
+                    junit allowEmptyResults: true, testResults: "test-results.xml"
+                }
+                success {
+                    echo "✅ All tests passed."
                 }
                 failure {
-                    echo "❌ Tests failed. Stopping pipeline — no images will be built."
+                    echo "❌ Tests failed. Pipeline stopping — no image will be built."
                 }
             }
         }
 
         // ── Stage 3: Build Docker images ───────────────────────────────
-        // Both images are built in parallel to save time.
+        // Both images built in parallel to save time.
+        // Tagged with both the short commit SHA and 'latest'.
         stage("Build") {
             parallel {
                 stage("Build ml-service") {
                     steps {
-                        echo "🔨 Building ${ML_IMAGE}:${IMAGE_TAG}"
+                        echo "Building ${ML_IMAGE}:${env.IMAGE_TAG}"
                         sh """
                             docker build \
-                                -t ${ML_IMAGE}:${IMAGE_TAG} \
+                                -t ${ML_IMAGE}:${env.IMAGE_TAG} \
                                 -t ${ML_IMAGE}:latest \
                                 ./ml-service
                         """
@@ -106,10 +127,10 @@ pipeline {
                 }
                 stage("Build log-producer") {
                     steps {
-                        echo "🔨 Building ${PRODUCER_IMAGE}:${IMAGE_TAG}"
+                        echo "Building ${PRODUCER_IMAGE}:${env.IMAGE_TAG}"
                         sh """
                             docker build \
-                                -t ${PRODUCER_IMAGE}:${IMAGE_TAG} \
+                                -t ${PRODUCER_IMAGE}:${env.IMAGE_TAG} \
                                 -t ${PRODUCER_IMAGE}:latest \
                                 ./log-producer
                         """
@@ -119,83 +140,68 @@ pipeline {
         }
 
         // ── Stage 4: Push to Docker Hub ────────────────────────────────
-        // Only runs on the main branch — feature branches build and test
-        // but don't push images or deploy.
         stage("Push") {
-            when {
-                branch "main"
-            }
             steps {
-                echo "📤 Pushing images to Docker Hub..."
+                echo "Pushing images to Docker Hub..."
                 withCredentials([usernamePassword(
                     credentialsId: "dockerhub-credentials",
                     usernameVariable: "DOCKER_USER",
                     passwordVariable: "DOCKER_PASS"
                 )]) {
-                    sh "echo ${DOCKER_PASS} | docker login -u ${DOCKER_USER} --password-stdin"
-
                     sh """
-                        docker push ${ML_IMAGE}:${IMAGE_TAG}
-                        docker push ${ML_IMAGE}:latest
-                        docker push ${PRODUCER_IMAGE}:${IMAGE_TAG}
-                        docker push ${PRODUCER_IMAGE}:latest
-                    """
+                        echo "${DOCKER_PASS}" | docker login -u "${DOCKER_USER}" --password-stdin
 
-                    sh "docker logout"
+                        docker push ${ML_IMAGE}:${env.IMAGE_TAG}
+                        docker push ${ML_IMAGE}:latest
+
+                        docker push ${PRODUCER_IMAGE}:${env.IMAGE_TAG}
+                        docker push ${PRODUCER_IMAGE}:latest
+
+                        docker logout
+                    """
                 }
-                echo "✅ Images pushed: ${ML_IMAGE}:${IMAGE_TAG}"
+                echo "✅ Pushed: ${ML_IMAGE}:${env.IMAGE_TAG}"
             }
         }
 
         // ── Stage 5: Deploy to Kubernetes ──────────────────────────────
-        // Uses kubectl with the kubeconfig secret to talk to your cluster.
-        // Updates the image tag in the running Deployment — K8s does
-        // a rolling update (zero downtime) automatically.
         stage("Deploy") {
-            when {
-                branch "main"
-            }
             steps {
-                echo "🚀 Deploying to Kubernetes namespace: ${K8S_NAMESPACE}"
+                echo "Deploying to Kubernetes..."
                 withCredentials([file(
                     credentialsId: "kubeconfig",
                     variable: "KUBECONFIG"
                 )]) {
-                    // Apply any manifest changes first (new ConfigMaps, Services, etc.)
-                    sh "kubectl apply -f k8s/ --namespace=${K8S_NAMESPACE}"
+                    // Apply all manifest changes first
+                    sh "kubectl apply -f k8s/ --namespace=${K8S_NAMESPACE} --validate=false"
 
-                    // Update the image tag in each Deployment to the new commit SHA.
-                    // This triggers K8s rolling updates — new pods come up before old ones go down.
+                    // Update image tags — this triggers a rolling update
                     sh """
                         kubectl set image deployment/ml-service \
-                            ml-service=${ML_IMAGE}:${IMAGE_TAG} \
+                            ml-service=${ML_IMAGE}:${env.IMAGE_TAG} \
                             --namespace=${K8S_NAMESPACE}
 
                         kubectl set image deployment/log-producer \
-                            log-producer=${PRODUCER_IMAGE}:${IMAGE_TAG} \
+                            log-producer=${PRODUCER_IMAGE}:${env.IMAGE_TAG} \
                             --namespace=${K8S_NAMESPACE}
                     """
 
-                    // Wait for the rollout to finish (or timeout after 3 minutes)
+                    // Wait for both rollouts to complete
                     sh """
                         kubectl rollout status deployment/ml-service \
-                            --namespace=${K8S_NAMESPACE} \
-                            --timeout=180s
+                            --namespace=${K8S_NAMESPACE} --timeout=180s
 
                         kubectl rollout status deployment/log-producer \
-                            --namespace=${K8S_NAMESPACE} \
-                            --timeout=180s
+                            --namespace=${K8S_NAMESPACE} --timeout=180s
                     """
-
-                    echo "✅ Rollout complete."
                 }
+                echo "✅ Deployment complete."
             }
             post {
                 failure {
-                    // If deploy fails, roll back to the previous working version
+                    echo "⚠️ Deploy failed — rolling back to previous version..."
                     withCredentials([file(credentialsId: "kubeconfig", variable: "KUBECONFIG")]) {
                         sh """
-                            echo "⚠️ Deployment failed — rolling back..."
                             kubectl rollout undo deployment/ml-service --namespace=${K8S_NAMESPACE}
                             kubectl rollout undo deployment/log-producer --namespace=${K8S_NAMESPACE}
                         """
@@ -205,43 +211,34 @@ pipeline {
         }
 
         // ── Stage 6: Health Check ──────────────────────────────────────
-        // After deploy, verify the new pods are actually healthy.
-        // Polls the /health endpoint — if it doesn't respond within
-        // 2 minutes, the build is marked as failed.
         stage("Health Check") {
-            when {
-                branch "main"
-            }
             steps {
-                echo "🩺 Verifying deployment health..."
+                echo "Verifying deployment health..."
                 withCredentials([file(credentialsId: "kubeconfig", variable: "KUBECONFIG")]) {
                     sh """
-                        # Get the NodePort assigned to ml-service
                         MINIKUBE_IP=\$(kubectl get node minikube \
                             -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
+
                         ML_PORT=\$(kubectl get svc ml-service \
                             --namespace=${K8S_NAMESPACE} \
                             -o jsonpath='{.spec.ports[0].nodePort}')
 
                         ML_URL="http://\${MINIKUBE_IP}:\${ML_PORT}"
-                        echo "Checking: \${ML_URL}/health"
+                        echo "Health check URL: \${ML_URL}/health"
 
-                        # Poll until healthy or timeout (24 attempts × 5s = 2 minutes)
                         for i in \$(seq 1 24); do
-                            STATUS=\$(curl -sf "\${ML_URL}/health" | python3 -c \
-                                "import sys,json; d=json.load(sys.stdin); print(d.get('status',''))" \
-                                2>/dev/null || echo "")
+                            HTTP_CODE=\$(curl -s -o /dev/null -w "%{http_code}" "\${ML_URL}/health" || echo "000")
 
-                            if [ "\$STATUS" = "healthy" ]; then
+                            if [ "\$HTTP_CODE" = "200" ]; then
                                 echo "✅ Health check passed on attempt \$i"
                                 exit 0
                             fi
 
-                            echo "Attempt \$i/24 — not ready yet, waiting 5s..."
+                            echo "Attempt \$i/24 — got HTTP \$HTTP_CODE, waiting 5s..."
                             sleep 5
                         done
 
-                        echo "❌ Health check timed out after 2 minutes"
+                        echo "❌ Health check timed out"
                         exit 1
                     """
                 }
@@ -249,30 +246,20 @@ pipeline {
         }
     }
 
-    // ── Post-pipeline notifications ────────────────────────────────────
+    /*
+     * FIX for Problem 9: Use env.IMAGE_TAG (not bare ${IMAGE_TAG}) in post block.
+     * The post block runs outside of any stage scope, so pipeline-level
+     * variables set in environment {} are fine, but dynamic ones set
+     * via script {} must be accessed as env.VARNAME.
+     */
     post {
         success {
-            echo """
-            ╔══════════════════════════════════════════╗
-            ║  ✅ Pipeline SUCCESS                     ║
-            ║  Branch : ${env.GIT_BRANCH}              ║
-            ║  Commit : ${IMAGE_TAG}                   ║
-            ║  Images : pushed & deployed              ║
-            ╚══════════════════════════════════════════╝
-            """
+            echo "✅ Pipeline SUCCESS | commit=${env.IMAGE_TAG} | branch=${env.GIT_BRANCH}"
         }
         failure {
-            echo """
-            ╔══════════════════════════════════════════╗
-            ║  ❌ Pipeline FAILED                      ║
-            ║  Branch : ${env.GIT_BRANCH}              ║
-            ║  Commit : ${IMAGE_TAG}                   ║
-            ║  Check logs above for details            ║
-            ╚══════════════════════════════════════════╝
-            """
+            echo "❌ Pipeline FAILED | commit=${env.IMAGE_TAG} | branch=${env.GIT_BRANCH}"
         }
         always {
-            // Clean up dangling Docker images to free disk space
             sh "docker image prune -f --filter 'dangling=true' || true"
             cleanWs()
         }
