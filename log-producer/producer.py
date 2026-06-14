@@ -11,8 +11,12 @@ import random
 import logging
 import os
 from datetime import datetime, timezone
-from kafka import KafkaProducer
-from kafka.errors import NoBrokersAvailable
+try:
+    from kafka import KafkaProducer
+    from kafka.errors import NoBrokersAvailable
+except ImportError:
+    KafkaProducer = None
+    NoBrokersAvailable = None
 
 # ── Logging setup (for the producer itself, not the fake app logs) ──
 logging.basicConfig(

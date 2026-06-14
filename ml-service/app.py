@@ -26,8 +26,12 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
-from kafka import KafkaConsumer
-from kafka.errors import NoBrokersAvailable
+try:
+    from kafka import KafkaConsumer
+    from kafka.errors import NoBrokersAvailable
+except ImportError:
+    KafkaConsumer = None
+    NoBrokersAvailable = None
 from elasticsearch import Elasticsearch
 
 # ── Logging ─────────────────────────────────────────────────────────
@@ -283,10 +287,16 @@ def index_result(es: Elasticsearch, result: dict):
 # ── Kafka consumer loop ──────────────────────────────────────────────
 
 def kafka_consumer_loop(detector: AnomalyDetector, es_client):
+
     """
     Runs in a background thread.
     Continuously reads from Kafka, scores each log, writes to ES.
     """
+
+    if KafkaConsumer is None:
+        logger.error("kafka-python-ng not installed. Consumer thread exiting.")
+        return
+
     consumer = None
     retries  = 0
 
