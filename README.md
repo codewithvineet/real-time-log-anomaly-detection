@@ -38,6 +38,8 @@ This project is my attempt to wire all of those together into something that act
 
 ## 🏗️ Architecture
 
+![CI/CD & Kubernetes Architecture](screenshots/cicd_kubernetes_architecture.png)
+
 ```
 GitHub → Jenkins CI/CD → Docker Hub → Kubernetes (Minikube)
                                               │
@@ -80,59 +82,44 @@ The ML service uses **Isolation Forest** — an unsupervised algorithm that work
 
 Each message consumed from Kafka is scored in real-time. If the score falls below the contamination threshold, it is tagged as an anomaly and indexed into Elasticsearch with a flag.
 
----
-
-## 📸 Screenshots to Add
-
-> Add these screenshots to a `/screenshots` folder in the repo and reference them here.
-
-### 1. Kibana Dashboard — Anomaly Events Timeline
-Take a screenshot of Kibana's Discover or Dashboard view showing:
-- A time-series graph of events with anomaly spikes highlighted
-- The index pattern showing flagged vs normal events
-
-**How:** Open Kibana → Dashboard → create a bar/line chart on `timestamp` with filter `is_anomaly: true`
+![ML Service Health](screenshots/ml-health.png)
 
 ---
 
-### 2. Grafana Dashboard — Live Metrics Panel
-Take a screenshot showing:
-- Total messages processed per minute
-- Anomaly rate (%) over time
-- A panel with current pod health
+## 📸 Screenshots
 
-**How:** Open Grafana → your dashboard → screenshot the full panel view
+### CI/CD & Kubernetes Architecture
+![Architecture](screenshots/cicd_kubernetes_architecture.png)
 
 ---
 
-### 3. Kafka Topic — Messages Flowing
-Take a screenshot of the Kafka consumer group lag or a live topic output:
-```bash
-kubectl exec -it <kafka-pod> -- kafka-console-consumer.sh \
-  --bootstrap-server localhost:9092 \
-  --topic your-topic --from-beginning
-```
-Screenshot the terminal showing JSON messages arriving in real-time.
+### Jenkins — Successful Pipeline Build
+![Jenkins Pipeline](screenshots/jenkins-success.png)
+> Every push to `main` triggers a full Build → Test → Push → Deploy cycle. All stages green = new version live on Kubernetes.
 
 ---
 
-### 4. Kubernetes Pods — Everything Running
-```bash
-kubectl get pods -A
-```
-Screenshot showing all pods in `Running` state — this proves the whole stack is live.
+### Kubernetes — All Pods Running
+![Kubernetes Pods](screenshots/kubernetes-pods.png)
+> All services (Kafka, Zookeeper, ML Service, Elasticsearch, Kibana, Grafana) deployed and healthy inside Minikube.
 
 ---
 
-### 5. Jenkins Pipeline — Successful Build
-Screenshot of the Jenkins Blue Ocean or classic pipeline view showing:
-- All stages green (Build → Test → Push → Deploy)
-- The most recent successful run
+### Grafana — Live Metrics Dashboard
+![Grafana Dashboard](screenshots/grafana-dashboard.png)
+> Real-time metrics: messages processed per minute, anomaly rate over time, and pod health — all in one view.
 
 ---
 
-### 6. Elasticsearch Index — Anomaly Documents
-Screenshot from Kibana Dev Tools or Elasticsearch UI showing a raw document with the `is_anomaly` field set to `true` and its score.
+### Kibana — Anomaly Events Discovery
+![Kibana Discover](screenshots/kibana-discover.png)
+> Elasticsearch documents indexed by the ML service, filterable by `is_anomaly: true`. Each flagged event visible with its anomaly score.
+
+---
+
+### ML Service — Health & Logs
+![ML Health](screenshots/ml-health.png)
+> Live logs from the Isolation Forest consumer — showing messages consumed, scored, and anomalies flagged in real-time.
 
 ---
 
@@ -156,8 +143,8 @@ This script will:
 2. Deploy Kafka + Zookeeper
 3. Deploy the ML service
 4. Deploy Elasticsearch, Kibana, Grafana
-5. Start the producer and stream sample data
-6. Open Kibana and Grafana in your browser
+5. Inject sample streaming data with anomalies baked in
+6. Open Kibana and Grafana in your browser automatically
 
 ### Manual Setup
 
@@ -199,10 +186,17 @@ kubectl port-forward svc/producer 8080:8080 &
 │   ├── kibana-deployment.yaml
 │   ├── grafana-deployment.yaml
 │   └── configmap.yaml
-├── jenkins/                # Jenkinsfile for CI/CD
+├── jenkins/
 │   └── Jenkinsfile
-├── screenshots/            # 📸 Add your screenshots here
-├── demo.sh                 # One-command demo script
+├── screenshots/
+│   ├── cicd_kubernetes_architecture.png
+│   ├── grafana-dashboard.png
+│   ├── jenkins-success.png
+│   ├── kibana-discover.png
+│   ├── kubernetes-pods.png
+│   └── ml-health.png
+├── tests/
+├── demo.sh
 └── README.md
 ```
 
