@@ -189,10 +189,10 @@ pipeline {
                     // Wait for both rollouts to complete
                     sh """
                         kubectl rollout status deployment/ml-service \
-                            --namespace=${K8S_NAMESPACE} --timeout=180s
+                            --namespace=${K8S_NAMESPACE} --timeout=300s
 
                         kubectl rollout status deployment/log-producer \
-                            --namespace=${K8S_NAMESPACE} --timeout=180s
+                            --namespace=${K8S_NAMESPACE} --timeout=300s
                     """
                 }
                 echo "✅ Deployment complete."
