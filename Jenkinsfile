@@ -222,10 +222,12 @@ pipeline {
                             -n ${K8S_NAMESPACE} \
                             -l app=ml-service \
                             -o jsonpath='{.items[0].metadata.name}')
+                    
                         echo "Checking health inside pod: \$POD_NAME"
-
+                    
                         kubectl exec -n ${K8S_NAMESPACE} \$POD_NAME -- \
-                            wget -qO- http://localhost:8000/health
+                            python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8000/health').read().decode())"
+                    
                         echo "✅ Health check passed"
                     """
                 }
