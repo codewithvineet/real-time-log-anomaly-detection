@@ -32,10 +32,9 @@ spec:
 
       containers:
         - name: log-producer
-          # imagePullPolicy: Never tells K8s to use the locally built image
-          # (the one you built with eval $(minikube docker-env))
-          image: log-producer:latest
-          imagePullPolicy: Never
+
+          image: codewithvineet/log-producer:latest
+          imagePullPolicy: Always
           env:
             - name: KAFKA_BROKER
               valueFrom:
