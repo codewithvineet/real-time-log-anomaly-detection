@@ -188,6 +188,8 @@ pipeline {
 
                     // Wait for both rollouts to complete
                     sh """
+                        sleep 90 
+
                         kubectl rollout status deployment/ml-service \
                             --namespace=${K8S_NAMESPACE} --timeout=300s
 
