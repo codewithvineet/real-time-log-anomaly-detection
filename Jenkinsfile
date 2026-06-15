@@ -218,30 +218,15 @@ pipeline {
                 echo "Verifying deployment health..."
                 withCredentials([file(credentialsId: "kubeconfig", variable: "KUBECONFIG")]) {
                     sh """
-                        MINIKUBE_IP=\$(kubectl get node minikube \
-                            -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
+                        POD_NAME=\$(kubectl get pod \
+                            -n ${K8S_NAMESPACE} \
+                            -l app=ml-service \
+                            -o jsonpath='{.items[0].metadata.name}')
+                        echo "Checking health inside pod: \$POD_NAME"
 
-                        ML_PORT=\$(kubectl get svc ml-service \
-                            --namespace=${K8S_NAMESPACE} \
-                            -o jsonpath='{.spec.ports[0].nodePort}')
-
-                        ML_URL="http://\${MINIKUBE_IP}:\${ML_PORT}"
-                        echo "Health check URL: \${ML_URL}/health"
-
-                        for i in \$(seq 1 24); do
-                            HTTP_CODE=\$(curl -s -o /dev/null -w "%{http_code}" "\${ML_URL}/health" || echo "000")
-
-                            if [ "\$HTTP_CODE" = "200" ]; then
-                                echo "✅ Health check passed on attempt \$i"
-                                exit 0
-                            fi
-
-                            echo "Attempt \$i/24 — got HTTP \$HTTP_CODE, waiting 5s..."
-                            sleep 5
-                        done
-
-                        echo "❌ Health check timed out"
-                        exit 1
+                        kubectl exec -n ${K8S_NAMESPACE} \$POD_NAME -- \
+                            wget -qO- http://localhost:8000/health
+                        echo "✅ Health check passed"
                     """
                 }
             }
